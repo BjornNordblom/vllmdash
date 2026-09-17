@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>vLLM Telemetry & Metrics Dashboard</title>
+  <meta name="description" content="Real-time, single-page observability dashboard for vLLM inference engine metrics and historical telemetry.">
+
+  <!-- Preconnect and fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <!-- Stylesheets -->
+  <link rel="stylesheet" href="css/styles.css">
+
+  <!-- Chart.js local bundle with CDN fallback -->
+  <script src="vendor/chart.umd.min.js"></script>
+  <script>
+    if (typeof Chart === 'undefined') {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"><\/script>');
+    }
+  </script>
+</head>
+<body>
+  <div class="dashboard-app" id="app">
+
+    <!-- Top Header Navigation & Controls -->
+    <header class="header-bar">
+      <!-- Endpoint Selector & Connect -->
+      <div class="endpoint-controls">
+        <div class="endpoint-input-wrapper">
+          <span class="endpoint-input-icon" title="Prometheus Metrics Endpoint">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+            </svg>
+          </span>
+          <input
+            type="text"
+            id="endpoint-input"
+            class="endpoint-input"
+            value="http://localhost:8000/metrics"
+            placeholder="http://host:port/metrics"
+            spellcheck="false"
+          >
+        </div>
+        <button id="btn-connect" class="btn btn-primary" title="Connect to server">
+          Connect
+        </button>
+      </div>
+
+      <!-- Polling & Interactive Tools -->
+      <div class="refresh-controls">
+        <div class="countdown-widget" title="Next automatic poll countdown">
+          <div class="countdown-bar-wrapper">
+            <div id="countdown-bar" class="countdown-bar-fill"></div>
+          </div>
+          <span id="countdown-text" class="mono">10s</span>
+        </div>
+
+        <select id="interval-select" class="custom-select" aria-label="Polling interval" title="Polling interval">
+          <option value="5">5s</option>
+          <option value="10" selected>10s</option>
+          <option value="15">15s</option>
+          <option value="30">30s</option>
+          <option value="60">60s</option>
+        </select>
+
+        <button id="btn-refresh" class="btn" title="Refresh metrics immediately">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6"></path>
+            <path d="M1 20v-6h6"></path>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          Refresh
+        </button>
+
+        <button id="btn-pause" class="btn" title="Pause auto polling">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="6" y="4" width="4" height="16"></rect>
+            <rect x="14" y="4" width="4" height="16"></rect>
+          </svg>
+          Pause
+        </button>
+
+      </div>
+
+      <!-- Historical Data Controls -->
+      <div class="history-controls">
+        <div class="time-window-buttons">
+          <button class="time-btn" data-window="5">5m</button>
+          <button class="time-btn active" data-window="15">15m</button>
+          <button class="time-btn" data-window="30">30m</button>
+          <button class="time-btn" data-window="60">1h</button>
+          <button class="time-btn" data-window="all">All</button>
+        </div>
+        <button id="btn-export-csv" class="btn btn-sm" title="Export historical data as CSV">CSV</button>
+        <button id="btn-export-json" class="btn btn-sm" title="Export historical data as JSON">JSON</button>
+      </div>
+
+      <button id="btn-theme" class="btn btn-icon" title="Toggle Dark/Light Mode">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"></circle>
+          <line x1="12" y1="1" x2="12" y2="3"></line>
+          <line x1="12" y1="21" x2="12" y2="23"></line>
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+          <line x1="1" y1="12" x2="3" y2="12"></line>
+          <line x1="21" y1="12" x2="23" y2="12"></line>
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Error / Info Notification Banner -->
+    <div id="alert-banner" class="alert-banner alert-banner-error">
+      <span id="alert-message">Connecting to vLLM server...</span>
+    </div>
+
+    <!-- System Overview Ribbon -->
+    <section class="system-ribbon" aria-label="System Overview">
+      <div class="ribbon-item">
+        <span class="ribbon-label">Model Name</span>
+        <span id="sys-model" class="ribbon-value mono">-</span>
+      </div>
+      <div class="ribbon-item">
+        <span class="ribbon-label">Engine State</span>
+        <span id="sys-state" class="ribbon-value">-</span>
+      </div>
+      <div class="ribbon-item">
+        <span class="ribbon-label">Engine Uptime</span>
+        <span id="sys-uptime" class="ribbon-value mono">-</span>
+      </div>
+      <div class="ribbon-item">
+        <span class="ribbon-label">Process CPU</span>
+        <span id="sys-cpu" class="ribbon-value mono">-</span>
+      </div>
+      <div class="ribbon-item">
+        <span class="ribbon-label">RSS / VMS Memory</span>
+        <span id="sys-memory" class="ribbon-value mono">-</span>
+      </div>
+      <div class="ribbon-item">
+        <span class="ribbon-label">Last Polled</span>
+        <span id="sys-lastpoll" class="ribbon-value mono">-</span>
+      </div>
+    </section>
+
+    <!-- KPI Metric Cards Grid with Historical Sparklines -->
+    <section class="kpi-grid" aria-label="Key Performance Indicators">
+
+      <!-- Card 1: KV Cache Usage -->
+      <article class="kpi-card">
+        <div class="kpi-card-header">
+          <span class="kpi-title">KV Cache Utilization</span>
+          <span class="kpi-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+              <line x1="6" y1="6" x2="6.01" y2="6"></line>
+              <line x1="6" y1="18" x2="6.01" y2="18"></line>
+            </svg>
+          </span>
+        </div>
+        <div class="kpi-body">
+          <div class="kpi-main-val">
+            <span id="kpi-kv-usage">0.0</span><span class="kpi-unit">%</span>
+          </div>
+          <div class="kpi-delta delta-neutral">
+            <span>Peak: <span id="kpi-kv-peak">0%</span></span>
+          </div>
+        </div>
+        <div class="kpi-sparkline-container" id="spark-kv"></div>
+        <div class="kpi-footer">
+          <div class="kpi-sub-item">
+            <span>Prefix Hit Rate:</span>
+            <span id="kpi-kv-prefixrate" class="kpi-sub-val">0.0%</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- Card 2: Concurrency & Queue -->
+      <article class="kpi-card">
+        <div class="kpi-card-header">
+          <span class="kpi-title">Request Concurrency</span>
+          <span class="kpi-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+          </span>
+        </div>
+        <div class="kpi-body">
+          <div class="kpi-main-val">
+            <span id="kpi-running">0</span><span class="kpi-unit">running</span>
+          </div>
+          <div class="kpi-delta delta-neutral">
+            <span>Waiting: <strong id="kpi-waiting">0</strong></span>
+          </div>
+        </div>
+        <div class="kpi-sparkline-container" id="spark-requests"></div>
+        <div class="kpi-footer">
+          <div class="kpi-sub-item">
+            <span>Preemptions:</span>
+            <span id="kpi-preemptions" class="kpi-sub-val">0</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- Card 3: Token Throughput -->
+      <article class="kpi-card">
+        <div class="kpi-card-header">
+          <span class="kpi-title">Token Throughput</span>
+          <span class="kpi-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+            </svg>
+          </span>
+        </div>
+        <div class="kpi-body">
+          <div class="kpi-main-val">
+            <span id="kpi-gen-rate">0.0</span><span class="kpi-unit">gen t/s</span>
+          </div>
+          <div class="kpi-delta delta-neutral">
+            <span>Prompt: <strong id="kpi-prompt-rate">0.0</strong> t/s</span>
+          </div>
+        </div>
+        <div class="kpi-sparkline-container" id="spark-tokens"></div>
+        <div class="kpi-footer" id="kpi-tokens-footer">
+          <div class="kpi-sub-item">
+            <span>Gen Total:</span>
+            <span id="kpi-gen-total" class="kpi-sub-val">0</span>
+          </div>
+          <div class="kpi-sub-item">
+            <span>Prompt Total:</span>
+            <span id="kpi-prompt-total" class="kpi-sub-val">0</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- Card 4: Request & Tool Throughput -->
+      <article class="kpi-card">
+        <div class="kpi-card-header">
+          <span class="kpi-title">Request Throughput</span>
+          <span class="kpi-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+            </svg>
+          </span>
+        </div>
+        <div class="kpi-body">
+          <div class="kpi-main-val">
+            <span id="kpi-req-rate">0.00</span><span class="kpi-unit">req/s</span>
+          </div>
+          <div class="kpi-delta delta-neutral">
+            <span>Tools: <strong id="kpi-tool-rate">0.00</strong> /s</span>
+          </div>
+        </div>
+        <div class="kpi-sparkline-container" id="spark-req-rate"></div>
+        <div class="kpi-footer" id="kpi-req-footer">
+          <div class="kpi-sub-item">
+            <span>Total Req:</span>
+            <span id="kpi-req-success" class="kpi-sub-val">0</span>
+          </div>
+          <div class="kpi-sub-item">
+            <span>Tool Calls:</span>
+            <span id="kpi-tool-calls" class="kpi-sub-val">0</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- Card 5: Latency Metrics -->
+      <article class="kpi-card">
+        <div class="kpi-card-header">
+          <span class="kpi-title">Latency (TTFT / TPOT)</span>
+          <span class="kpi-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+          </span>
+        </div>
+        <div class="kpi-body">
+          <div class="kpi-main-val">
+            <span id="kpi-ttft">0.0 ms</span>
+          </div>
+          <div class="kpi-delta delta-neutral">
+            <span>ITL: <strong id="kpi-itl">0.0 ms</strong></span>
+          </div>
+        </div>
+        <div class="kpi-sparkline-container" id="spark-latency"></div>
+        <div class="kpi-footer">
+          <div class="kpi-sub-item">
+            <span>E2E Avg:</span>
+            <span id="kpi-e2e" class="kpi-sub-val">0.0 ms</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- Card 6: Speculative Decoding -->
+      <article class="kpi-card">
+        <div class="kpi-card-header">
+          <span class="kpi-title">Speculative Decoding</span>
+          <span class="kpi-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+          </span>
+        </div>
+        <div class="kpi-body">
+          <div class="kpi-main-val">
+            <span id="kpi-spec-acceptance">0.0%</span>
+          </div>
+          <div class="kpi-delta delta-good">
+            <span>Accepted / Draft</span>
+          </div>
+        </div>
+        <div class="kpi-sparkline-container" id="spark-spec"></div>
+        <div class="kpi-footer">
+          <div class="kpi-sub-item">
+            <span>Drafted: <span id="kpi-spec-drafted" class="kpi-sub-val">0</span></span>
+          </div>
+          <div class="kpi-sub-item">
+            <span>Accepted: <span id="kpi-spec-accepted" class="kpi-sub-val">0</span></span>
+          </div>
+        </div>
+      </article>
+
+    </section>
+
+    <!-- Historical Telemetry Graphs Section -->
+    <div class="section-header">
+      <h2 class="section-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="20" x2="18" y2="10"></line>
+          <line x1="12" y1="20" x2="12" y2="4"></line>
+          <line x1="6" y1="20" x2="6" y2="14"></line>
+        </svg>
+        Historical Telemetry
+      </h2>
+
+    </div>
+
+    <!-- Main Charts Grid (6 Large Graphs) -->
+    <section class="charts-grid" aria-label="Telemetry Graphs">
+
+      <!-- Graph 1: Request & Concurrency Dynamics -->
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title">Request Concurrency & Queue</div>
+            <div class="chart-card-subtitle">Active running requests, queue backlog, and preemptions</div>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-requests"></canvas>
+        </div>
+      </div>
+
+      <!-- Graph 2: Token Throughput Dynamics -->
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title">Token Generation & Prompt Rate</div>
+            <div class="chart-card-subtitle">Tokens processed per second (Prefill vs Decode)</div>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-tokens"></canvas>
+        </div>
+      </div>
+
+      <!-- Graph 3: KV Cache & Prefix Cache Dynamics -->
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title">KV Cache Memory & Prefix Hit Rate (%)</div>
+            <div class="chart-card-subtitle">GPU memory saturation and token reuse efficiency</div>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-kvcache"></canvas>
+        </div>
+      </div>
+
+      <!-- Graph 4: Latency Profiling -->
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title">Latency Trends (ms)</div>
+            <div class="chart-card-subtitle">Time to First Token (TTFT), Inter-Token Latency (ITL), and End-to-End latency</div>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-latency"></canvas>
+        </div>
+      </div>
+
+      <!-- Graph 5: Speculative Decoding Performance -->
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title">Speculative Decoding Efficiency</div>
+            <div class="chart-card-subtitle">Draft generation vs acceptance rate and token velocity</div>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-specdecode"></canvas>
+        </div>
+      </div>
+
+      <!-- Graph 6: Request Stage Timing Breakdown -->
+      <div class="chart-card">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-card-title">Request Lifecycle Phase Breakdown (ms)</div>
+            <div class="chart-card-subtitle">Time spent in Queue, Prefill, and Decode execution phases</div>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="chart-stages"></canvas>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Raw Prometheus Metrics Explorer -->
+    <section class="raw-explorer-card" aria-label="Raw Metrics Explorer">
+      <div class="explorer-header" id="explorer-header">
+        <div class="explorer-title">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
+          Prometheus Metrics Inspector
+        </div>
+        <svg id="explorer-chevron" class="explorer-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </div>
+
+      <div class="explorer-content" id="explorer-content">
+        <div class="explorer-search-bar">
+          <input
+            type="text"
+            id="raw-search-input"
+            class="explorer-search-input"
+            placeholder="Search metric name, type, or labels..."
+          >
+          <span id="raw-metrics-count" class="mono" style="font-size: 11px; color: var(--fg-muted);">0 metrics</span>
+        </div>
+
+        <div class="explorer-table-wrapper">
+          <table class="metrics-table">
+            <thead>
+              <tr>
+                <th style="width: 32%;">Metric Name</th>
+                <th style="width: 12%;">Type</th>
+                <th style="width: 38%;">Labels</th>
+                <th style="width: 18%;">Value</th>
+              </tr>
+            </thead>
+            <tbody id="raw-metrics-tbody">
+              <tr>
+                <td colspan="4" style="text-align: center; color: var(--fg-muted); padding: 16px;">
+                  Click to inspect live parsed telemetry
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="dashboard-footer">
+      <div>vLLM Metrics Dashboard &bull; Pure HTML5 / Canvas / Vanilla JS / CSS</div>
+      <div>Default Endpoint: <code class="mono">http://localhost:8000/metrics</code></div>
+    </footer>
+
+  </div>
+
+  <!-- Application Logic Scripts -->
+  <script src="js/parser.js"></script>
+  <script src="js/metrics.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
